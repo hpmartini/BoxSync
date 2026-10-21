@@ -229,3 +229,25 @@ private func plan(_ l: KeyValuePairs<String, FileMeta> = [:], _ r: KeyValuePairs
     let lr = SyncPlanner.logicalRemote(snap(["a.txt": meta(), "b.txt": meta(), "Docs/a.txt": meta(), "Docs/b.txt": meta()]))
     #expect(lr.snapshot.entries.count == 4 && lr.shadowed.isEmpty)
 }
+
+@Test func bothSpellingsStayMirroredWhenTheUserAlreadyHasBoth() {
+    // case-sensitive local volume: a.md and A.md are two real tracked files; neither may drop out of the mirror
+    let m = meta(hash: "h")
+    let remote = snap(["a.md": m, "A.md": m])
+    let known: Set<RelativePath> = [P("a.md"), P("A.md")]
+    let lr = SyncPlanner.logicalRemote(remote, preferring: known)
+    #expect(lr.shadowed.isEmpty && lr.snapshot.entries.count == 2)
+    let a = SyncPlanner.plan(local: snap(["a.md": m, "A.md": m]), remote: lr.snapshot, base: base(["a.md": (m, m), "A.md": (m, m)])).actions
+    #expect(a.isEmpty, "\(a)")
+}
+
+@Test func aShadowedNameIsNeverATrackedFile() {
+    // whatever the Box holds, every state record stays visible in the mirror when the Box has it, so no case twin can cause a trash
+    let m = meta(hash: "h")
+    let remote = snap(["Report.md": meta(20), "report.md": m, "REPORT.md": meta(30)])
+    let lr = SyncPlanner.logicalRemote(remote, preferring: [P("report.md")])
+    #expect(lr.rawName[P("report.md")] == P("report.md"))
+    #expect(Set(lr.shadowed.map(\.raw)) == ["Report.md", "REPORT.md"])
+    let a = SyncPlanner.plan(local: snap(["report.md": m]), remote: lr.snapshot, base: base(["report.md": (m, m)])).actions
+    #expect(a.isEmpty, "\(a)")
+}

@@ -52,9 +52,10 @@ public enum SyncPlanner {
     /// Pairs local and remote files by NFC name. Per name the NFC spelling is mirrored if the Box has it,
     /// otherwise the byte-wise first one; every other spelling is listed in `shadowed`.
     /// Names (and folders on the way) that differ only in letter case cannot coexist on a case-insensitive volume,
-    /// so only one spelling is mirrored: one the user already has (`known`: local files and state records) wins,
-    /// else the byte-wise first. Without that preference a new `Report.md` on the Box would push the tracked
-    /// `report.md` out of the mirror, and the planner would then trash it locally as "deleted on the Box".
+    /// so only one new spelling is mirrored per name. Every spelling the user already has (`known`: local files and
+    /// state records) stays mirrored, so a tracked file can never drop out of the mirror, which the planner would read
+    /// as "deleted on the Box" and trash locally (a new `Report.md` on the Box next to the tracked `report.md`; or both
+    /// spellings on a case-sensitive volume). An unknown spelling is only mirrored if no spelling of that name is yet.
     /// shortcut: `lowercased()` instead of APFS's exact folding table, upgrade if a locale mismatch ever shows up.
     public static func logicalRemote(_ remote: Snapshot, preferring known: Set<RelativePath> = []) -> LogicalRemote {
         var out = LogicalRemote(snapshot: Snapshot(), rawName: [:], rawDirs: [:], shadowed: [])
@@ -62,13 +63,14 @@ public enum SyncPlanner {
             let parts = p.split(separator: "/", omittingEmptySubsequences: true)
             return (1...max(parts.count, 1)).map { parts.prefix($0).joined(separator: "/") }
         }
-        var canon: [String: String] = [:]   // case-folded path prefix -> the spelling that is mirrored
-        for p in known.map(\.logical).sorted() + remote.entries.keys.map(\.logical).sorted() {
-            for pre in prefixes(p) where canon[pre.lowercased()] == nil { canon[pre.lowercased()] = pre }
+        var mirrored: [String: Set<String>] = [:]   // case-folded path prefix -> spellings that are mirrored
+        for p in known.map(\.logical) { for pre in prefixes(p) { mirrored[pre.lowercased(), default: []].insert(pre) } }
+        for p in remote.entries.keys.map(\.logical).sorted() {
+            for pre in prefixes(p) where mirrored[pre.lowercased()] == nil { mirrored[pre.lowercased()] = [pre] }
         }
         for raw in remote.entries.keys.sorted() {
             let key = raw.normalized
-            if prefixes(key.raw).contains(where: { canon[$0.lowercased()] != $0 }) {
+            if prefixes(key.raw).contains(where: { mirrored[$0.lowercased()]?.contains($0) != true }) {
                 out.shadowed.append(raw); continue   // a case variant of a name or folder that is mirrored in another spelling
             }
             if let current = out.rawName[key] {
