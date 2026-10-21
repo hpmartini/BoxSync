@@ -1,0 +1,9 @@
+.build/
+.spike/
+.testdata/
+xcuserdata/
+.swiftpm/
+*.xcodeproj
+.DS_Store
+build/
+briefings/
