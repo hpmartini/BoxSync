@@ -89,6 +89,9 @@ See [docs/obsidian-iphone.md](docs/obsidian-iphone.md).
 - No on-demand download or automatic eviction: every folder is a full local copy.
   A File Provider extension (placeholders) is the planned next step; the sync core is UI-free and sits behind the `SyncEngine` protocol.
 - Orphaned `.part` files from interrupted uploads are not cleaned up automatically.
+- Builds are signed ad hoc, so every rebuild is a new app identity for the Keychain. macOS then asks once for your
+  login Keychain password ("BoxSync wants to use confidential information"). Choose *Always Allow*. Until you answer,
+  the app waits at start-up. A stable signing identity avoids the prompt on rebuilds.
 - Names that differ only in letter case (`Report.md` and `report.md`, also folders) cannot coexist on the default
   case-insensitive macOS volume. BoxSync mirrors one spelling (the one you already have, else the byte-wise first),
   reports the other as an error and never touches or trashes it. Rename it on the Box to bring it down.

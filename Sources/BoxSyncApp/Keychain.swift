@@ -2,6 +2,11 @@ import Foundation
 import BoxSyncCore
 import Security
 
+struct KeychainError: Error, LocalizedError {
+    let status: OSStatus
+    var errorDescription: String? { "Schlüsselbund: \(SecCopyErrorMessageString(status, nil) as String? ?? "Fehler") (\(status))" }
+}
+
 /// Password storage. Never logs or returns the secret anywhere but to the caller of `read`.
 enum Keychain {
     static let service = "de.martini-labs.BoxSync"
@@ -43,7 +48,16 @@ enum Keychain {
     // Pinned SSH host keys (public data, stored as generic password items so they live next to the password).
     private static func hostKeyAccount(_ host: String, _ port: Int) -> String { "hostkey:\(host):\(port)" }
 
-    static func hostKey(host: String, port: Int) -> String? { read(account: hostKeyAccount(host, port)) }
+    /// nil only when no pin exists; any other failure (denied, locked) throws so it can never pass as a first connect.
+    static func hostKey(host: String, port: Int) throws -> String? {
+        var q = query(hostKeyAccount(host, port))
+        q[kSecReturnData as String] = true
+        var out: AnyObject?
+        let status = SecItemCopyMatching(q as CFDictionary, &out)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let d = out as? Data else { throw KeychainError(status: status) }
+        return String(data: d, encoding: .utf8)
+    }
     /// Add-only: an existing pin is never replaced, not even when `hostKey` failed to read it (a locked or broken Keychain
     /// would otherwise look like a first connect). A duplicate makes this return false and the connection is refused.
     @discardableResult
@@ -56,6 +70,9 @@ enum Keychain {
 
 /// Keychain-backed pin store for the SFTP host key (trust on first use).
 struct KeychainHostKeys: HostKeyStore {
-    func pinnedKey(host: String, port: Int) -> String? { Keychain.hostKey(host: host, port: port) }
+    func pinnedKey(host: String, port: Int) throws -> String? {
+        do { return try Keychain.hostKey(host: host, port: port) }
+        catch { throw HostKeyStoreUnavailable(host: host, detail: error.localizedDescription) }
+    }
     func pin(_ key: String, host: String, port: Int) -> Bool { Keychain.pinHostKey(key, host: host, port: port) }
 }
