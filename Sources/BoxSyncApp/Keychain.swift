@@ -44,8 +44,14 @@ enum Keychain {
     private static func hostKeyAccount(_ host: String, _ port: Int) -> String { "hostkey:\(host):\(port)" }
 
     static func hostKey(host: String, port: Int) -> String? { read(account: hostKeyAccount(host, port)) }
+    /// Add-only: an existing pin is never replaced, not even when `hostKey` failed to read it (a locked or broken Keychain
+    /// would otherwise look like a first connect). A duplicate makes this return false and the connection is refused.
     @discardableResult
-    static func pinHostKey(_ key: String, host: String, port: Int) -> Bool { write(key, account: hostKeyAccount(host, port)) }
+    static func pinHostKey(_ key: String, host: String, port: Int) -> Bool {
+        var add = query(hostKeyAccount(host, port))
+        add[kSecValueData as String] = Data(key.utf8)
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+    }
 }
 
 /// Keychain-backed pin store for the SFTP host key (trust on first use).
