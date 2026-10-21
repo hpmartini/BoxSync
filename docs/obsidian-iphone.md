@@ -45,8 +45,9 @@ Replace it with the name of your vault folder.
      do not run on iOS. The two lines above only matter if you ever turn those options on.
 6. Set **Skip Large Files** to `50` (MB). Obsidian on iOS has trouble with files above that size.
    Optional: to keep big folders off the phone, add more lines to the ignore list, for example `^wiki/`.
-7. Leave **Abort Sync If Modification Above Percentage** at 50. It stops a sync that would change
-   more than half of the files at once.
+7. Leave **Abort Sync If Modification Above Percentage** at 50. It stops a sync that would delete, modify or
+   conflict-resolve more than half of the files at once. Newly created files do not count (checked in the plugin
+   source), so the first merge normally passes. If it still aborts, read the plan before raising the value.
 8. **Preview first.** Open the command palette and run *Remotely Save: start sync (dry run only)*,
    then *export sync plans (latest 1)* and read the plan.
    Expect many downloads: the iPhone vault is merged with the Box folder in both directions.
