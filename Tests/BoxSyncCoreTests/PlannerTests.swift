@@ -194,3 +194,38 @@ private func plan(_ l: KeyValuePairs<String, FileMeta> = [:], _ r: KeyValuePairs
     #expect(!Exclusions.matches(P("d/.staging/x"), patterns: pats))
     #expect(!Exclusions.matches(P("d/foo.txt"), patterns: pats))
 }
+
+// MARK: Names that differ only in letter case (collide on a case-insensitive volume)
+
+@Test func caseVariantOnTheBoxIsMirroredOnceAndTheOtherOnlyReported() {
+    let lr = SyncPlanner.logicalRemote(snap(["report.md": meta(), "Report.md": meta(20)]))
+    #expect(lr.snapshot.entries.count == 1)
+    #expect(lr.rawName[P("Report.md")] == P("Report.md"))   // byte-wise first wins without a known spelling
+    #expect(lr.shadowed == [P("report.md")])
+    let a = SyncPlanner.plan(local: Snapshot(), remote: lr.snapshot, base: StateSnapshot()).actions
+    #expect(a == [.download(P("Report.md"))])                // one download, nothing for the twin
+}
+
+@Test func spellingTheUserAlreadyHasWinsAndIsNeverTrashed() {
+    // report.md is tracked and local; the Box now also holds Report.md. Byte order alone would pick Report.md,
+    // drop report.md from the mirror and make the planner trash the local file as "deleted on the Box".
+    let m = meta(hash: "h")
+    let remote = snap(["Report.md": meta(20), "report.md": m])
+    let known: Set<RelativePath> = [P("report.md")]
+    let lr = SyncPlanner.logicalRemote(remote, preferring: known)
+    #expect(lr.rawName[P("report.md")] == P("report.md"))
+    #expect(lr.shadowed == [P("Report.md")])
+    let a = SyncPlanner.plan(local: snap(["report.md": m]), remote: lr.snapshot, base: base(["report.md": (m, m)])).actions
+    #expect(a.isEmpty, "\(a)")
+}
+
+@Test func folderCaseVariantIsShadowedToo() {
+    let lr = SyncPlanner.logicalRemote(snap(["Docs/a.txt": meta(), "docs/b.txt": meta(), "docs/sub/c.txt": meta()]))
+    #expect(Set(lr.snapshot.entries.keys.map(\.raw)) == ["Docs/a.txt"])
+    #expect(Set(lr.shadowed.map(\.raw)) == ["docs/b.txt", "docs/sub/c.txt"])
+}
+
+@Test func namesWithoutACaseTwinAreUntouched() {
+    let lr = SyncPlanner.logicalRemote(snap(["a.txt": meta(), "b.txt": meta(), "Docs/a.txt": meta(), "Docs/b.txt": meta()]))
+    #expect(lr.snapshot.entries.count == 4 && lr.shadowed.isEmpty)
+}

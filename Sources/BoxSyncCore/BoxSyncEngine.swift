@@ -153,10 +153,10 @@ public actor BoxSyncEngine: SyncEngine {
         let base = try await store.snapshot()
         let localSnap = try await disk.scan(root: config.syncFolder, exclusions: config.exclusions,
                                             known: base.records.mapValues(\.local))
-        let names = SyncPlanner.logicalRemote(try await scanRemote(remote))
+        let names = SyncPlanner.logicalRemote(try await scanRemote(remote), preferring: Set(localSnap.entries.keys).union(base.records.keys))
         let remoteSnap = names.snapshot
         for extra in names.shadowed where reportedShadowed.insert(extra).inserted {
-            addIssue(extra, "Auf der Box liegt derselbe Name in zwei Unicode-Schreibweisen (NFC/NFD); nur eine wird gespiegelt, diese bleibt unberührt auf der Box")
+            addIssue(extra, "Auf der Box liegt derselbe Name in einer zweiten Schreibweise (Unicode NFC/NFD oder nur Groß-/Kleinschreibung); nur eine wird gespiegelt, diese bleibt unberührt auf der Box")
         }
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "en_US_POSIX"); fmt.dateFormat = "yyyy-MM-dd"

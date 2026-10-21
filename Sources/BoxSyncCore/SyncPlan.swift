@@ -51,10 +51,26 @@ public struct LogicalRemote: Sendable {
 public enum SyncPlanner {
     /// Pairs local and remote files by NFC name. Per name the NFC spelling is mirrored if the Box has it,
     /// otherwise the byte-wise first one; every other spelling is listed in `shadowed`.
-    public static func logicalRemote(_ remote: Snapshot) -> LogicalRemote {
+    /// Names (and folders on the way) that differ only in letter case cannot coexist on a case-insensitive volume,
+    /// so only one spelling is mirrored: one the user already has (`known`: local files and state records) wins,
+    /// else the byte-wise first. Without that preference a new `Report.md` on the Box would push the tracked
+    /// `report.md` out of the mirror, and the planner would then trash it locally as "deleted on the Box".
+    /// shortcut: `lowercased()` instead of APFS's exact folding table, upgrade if a locale mismatch ever shows up.
+    public static func logicalRemote(_ remote: Snapshot, preferring known: Set<RelativePath> = []) -> LogicalRemote {
         var out = LogicalRemote(snapshot: Snapshot(), rawName: [:], rawDirs: [:], shadowed: [])
+        func prefixes(_ p: String) -> [String] {
+            let parts = p.split(separator: "/", omittingEmptySubsequences: true)
+            return (1...max(parts.count, 1)).map { parts.prefix($0).joined(separator: "/") }
+        }
+        var canon: [String: String] = [:]   // case-folded path prefix -> the spelling that is mirrored
+        for p in known.map(\.logical).sorted() + remote.entries.keys.map(\.logical).sorted() {
+            for pre in prefixes(p) where canon[pre.lowercased()] == nil { canon[pre.lowercased()] = pre }
+        }
         for raw in remote.entries.keys.sorted() {
             let key = raw.normalized
+            if prefixes(key.raw).contains(where: { canon[$0.lowercased()] != $0 }) {
+                out.shadowed.append(raw); continue   // a case variant of a name or folder that is mirrored in another spelling
+            }
             if let current = out.rawName[key] {
                 if raw == key {   // NFC spelling wins over the one mirrored so far
                     out.shadowed.append(current); out.rawName[key] = raw; out.snapshot.entries[key] = remote.entries[raw]

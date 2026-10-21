@@ -89,8 +89,10 @@ See [docs/obsidian-iphone.md](docs/obsidian-iphone.md).
 - No on-demand download or automatic eviction: every folder is a full local copy.
   A File Provider extension (placeholders) is the planned next step; the sync core is UI-free and sits behind the `SyncEngine` protocol.
 - Orphaned `.part` files from interrupted uploads are not cleaned up automatically.
-- Names that differ only in letter case (`Report.md` and `report.md`) are not detected. On the default case-insensitive
-  macOS volume they would collide into one local file, so avoid such pairs on the Box. A collision guard is on the to-do list.
+- Names that differ only in letter case (`Report.md` and `report.md`, also folders) cannot coexist on the default
+  case-insensitive macOS volume. BoxSync mirrors one spelling (the one you already have, else the byte-wise first),
+  reports the other as an error and never touches or trashes it. Rename it on the Box to bring it down.
+  A local case-only rename (`report.md` to `Report.md`) is treated as a new file and leaves the old name on the Box.
 - The interface is German only.
 
 ## Design
