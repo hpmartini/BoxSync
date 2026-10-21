@@ -11,7 +11,7 @@ final class SyncPair: Identifiable {
     let state = SyncState()
     let engine: SyncEngine
     nonisolated let id: String
-    var name: String { config.remoteRoot.isEmpty ? config.syncFolder.lastPathComponent : config.remoteRoot }
+    var name: String { config.displayName }
 
     init(config: Config) {
         self.config = config
@@ -140,7 +140,7 @@ final class AppEnvironment: ObservableObject {
     }
 
     /// `pairs.v1`, else the single pre-multi-pair `config.v1`, else the default folder.
-    private static func loadConfigs() -> [Config] {
+    static func loadConfigs() -> [Config] {
         if Demo.enabled { return Demo.configs }
         let d = UserDefaults.standard
         if let data = d.data(forKey: pairsKey), let c = try? JSONDecoder().decode([Config].self, from: data), !c.isEmpty { return c }

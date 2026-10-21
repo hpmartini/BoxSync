@@ -17,6 +17,9 @@ public struct Config: Codable, Hashable, Sendable {
     /// Local trash folder; a dated subfolder is added per run.
     public var localTrashURL: URL
 
+    /// Short name for menus and reports: the Box folder, else the local folder name.
+    public var displayName: String { remoteRoot.isEmpty ? syncFolder.lastPathComponent : remoteRoot }
+
     /// Identifies the sync pair; the state store is per pair, so records of another folder/Box never apply.
     public var stateID: String {
         let key = [syncFolder.standardizedFileURL.path, host, String(port), user, remoteRoot].joined(separator: "\u{1F}")

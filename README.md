@@ -58,6 +58,20 @@ or a glob with `/` (whole relative path).
 Never point two sync pairs at overlapping Box folders. If one pair maps the Box root, exclude the other pair's
 folder there (for example `Notes/**`).
 
+## Check from the command line
+
+`BoxSyncApp --check` scans every folder pair in check-only mode (nothing is changed on either side), prints a report
+and writes it to a file. No menu, no window, no clicks:
+
+```sh
+~/Applications/BoxSync.app/Contents/MacOS/BoxSyncApp --check                 # report in ~/Library/Logs/BoxSync/check.txt
+~/Applications/BoxSync.app/Contents/MacOS/BoxSyncApp --check --out ~/check.txt
+```
+
+Exit code: `0` everything in sync, `1` work pending or an error, `2` the report could not be written.
+The command runs inside the app binary so it uses the same Keychain approval as the menu bar app.
+It opens its own connection, so it can run while the app is running.
+
 ## Tests
 
 ```sh

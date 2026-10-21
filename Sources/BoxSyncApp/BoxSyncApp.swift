@@ -1,7 +1,16 @@
 import SwiftUI
 import BoxSyncCore
 
+/// `--check` runs the headless diagnosis (see `Diagnose`), anything else starts the menu bar app.
 @main
+@MainActor
+enum Entry {
+    static func main() {
+        if let options = Diagnose.parse(CommandLine.arguments) { Diagnose.run(options) }
+        BoxSyncApp.main()
+    }
+}
+
 struct BoxSyncApp: App {
     @StateObject private var env = AppEnvironment()
 
