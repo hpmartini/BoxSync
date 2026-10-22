@@ -108,7 +108,8 @@ See [docs/obsidian-iphone.md](docs/obsidian-iphone.md).
   Choose *Always Allow*. Until you answer, the app waits at start-up.
   Run `scripts/make-signing-cert.sh` once: it creates a self-signed code-signing certificate "BoxSync Local Signing"
   in your login keychain, and `scripts/build-app.sh` then signs every build with it. The identity stays the same,
-  so the prompt appears only once more after the switch. Remove it with
+  so the prompt appears only once more after the switch (checked: a rebuild and reinstall afterwards raised no prompt).
+  Remove it with
   `security delete-identity -c "BoxSync Local Signing"`.
 - Names that differ only in letter case (`Report.md` and `report.md`, also folders) cannot coexist on the default
   case-insensitive macOS volume. BoxSync mirrors one spelling (the one you already have, else the byte-wise first),
