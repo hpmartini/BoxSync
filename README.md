@@ -44,7 +44,7 @@ of each folder, compares it with the Box, and only moves what changed.
 ## Build and run
 
 ```sh
-scripts/build-app.sh          # builds build/BoxSync.app (ad-hoc signed)
+scripts/build-app.sh          # builds build/BoxSync.app (signed, see "Limits" for the certificate)
 open build/BoxSync.app
 ```
 
@@ -103,9 +103,13 @@ See [docs/obsidian-iphone.md](docs/obsidian-iphone.md).
 - No on-demand download or automatic eviction: every folder is a full local copy.
   A File Provider extension (placeholders) is the planned next step; the sync core is UI-free and sits behind the `SyncEngine` protocol.
 - Orphaned `.part` files from interrupted uploads are not cleaned up automatically.
-- Builds are signed ad hoc, so every rebuild is a new app identity for the Keychain. macOS then asks once for your
-  login Keychain password ("BoxSync wants to use confidential information"). Choose *Always Allow*. Until you answer,
-  the app waits at start-up. A stable signing identity avoids the prompt on rebuilds.
+- Without a signing certificate, builds are signed ad hoc, so every rebuild is a new app identity for the Keychain.
+  macOS then asks for your login Keychain password ("BoxSync wants to use confidential information") after each rebuild.
+  Choose *Always Allow*. Until you answer, the app waits at start-up.
+  Run `scripts/make-signing-cert.sh` once: it creates a self-signed code-signing certificate "BoxSync Local Signing"
+  in your login keychain, and `scripts/build-app.sh` then signs every build with it. The identity stays the same,
+  so the prompt appears only once more after the switch. Remove it with
+  `security delete-identity -c "BoxSync Local Signing"`.
 - Names that differ only in letter case (`Report.md` and `report.md`, also folders) cannot coexist on the default
   case-insensitive macOS volume. BoxSync mirrors one spelling (the one you already have, else the byte-wise first),
   reports the other as an error and never touches or trashes it. Rename it on the Box to bring it down.
