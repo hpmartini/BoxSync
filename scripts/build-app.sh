@@ -1,21 +1,15 @@
 #!/bin/bash
-# Builds the release executable and wraps it into build/BoxSync.app (signed with "BoxSync Local Signing" if present, else ad hoc).
+# Builds build/BoxSync.app (menu bar app + File Provider extension) with Xcode, signed with the team in project.yml.
+# Needs xcodegen (brew install xcodegen) and an Apple ID in Xcode (Settings > Accounts) for that team.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$ROOT/build/BoxSync.app"
+cd "$ROOT"
 
-swift build --package-path "$ROOT" -c release --product BoxSyncApp
-BIN="$(swift build --package-path "$ROOT" -c release --show-bin-path)/BoxSyncApp"
+xcodegen generate --quiet
+xcodebuild -project BoxSync.xcodeproj -scheme BoxSync -configuration Release \
+    -derivedDataPath .build/xcode -allowProvisioningUpdates build -quiet
 
-rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
-cp "$BIN" "$APP/Contents/MacOS/BoxSyncApp"
-cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
-IDENTITY="BoxSync Local Signing"   # created by scripts/make-signing-cert.sh
-if security find-identity -v -p codesigning | grep -q "$IDENTITY"; then
-    codesign --force -s "$IDENTITY" "$APP"
-else
-    echo "No \"$IDENTITY\" certificate, signing ad hoc (run scripts/make-signing-cert.sh once for a stable signature)" >&2
-    codesign --force -s - "$APP"
-fi
-echo "$APP"
+rm -rf build/BoxSync.app
+mkdir -p build
+ditto .build/xcode/Build/Products/Release/BoxSync.app build/BoxSync.app
+echo "$ROOT/build/BoxSync.app"

@@ -9,7 +9,7 @@ private let password = TestBox.password
 
 @Suite("Host key pinning", .enabled(if: TestBox.configured, "BOXSYNC_TEST_HOST/_USER/_PASSWORD not set"))
 struct HostKeyTests {
-    let cfg = Config(syncFolder: URL(fileURLWithPath: "/private/tmp/boxsync-hostkey-unused"), host: TestBox.host, user: TestBox.user)
+    let cfg = Config(host: TestBox.host, user: TestBox.user)
 
     private func connect(_ keys: HostKeyStore) async throws {
         let r = try await SFTPRemoteFileSystem.connect(host: cfg.host, port: cfg.port, user: cfg.user, password: password ?? "", hostKeys: keys)

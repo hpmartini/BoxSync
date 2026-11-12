@@ -1,7 +1,7 @@
 import SwiftUI
 import BoxSyncCore
 
-/// `--check` runs the headless diagnosis (see `Diagnose`), anything else starts the menu bar app.
+/// `--check` runs the headless connection check (see `Diagnose`), anything else starts the menu bar app.
 @main
 @MainActor
 enum Entry {
@@ -29,7 +29,5 @@ struct BoxSyncApp: App {
 
 private struct StatusIcon: View {
     @ObservedObject var env: AppEnvironment
-    var body: some View {
-        Image(systemName: SyncPhase.combined(env.pairs.map(\.state.status)).symbol)
-    }
+    var body: some View { Image(systemName: statusSymbol(env)) }
 }

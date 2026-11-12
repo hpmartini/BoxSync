@@ -1,0 +1,49 @@
+# XcodeGen spec: `xcodegen generate` writes BoxSync.xcodeproj (not checked in). Build with scripts/build-app.sh.
+name: BoxSync
+options:
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    DEVELOPMENT_TEAM: B6VK6QB456
+    CODE_SIGN_STYLE: Automatic
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    MARKETING_VERSION: "0.2.0"
+    CURRENT_PROJECT_VERSION: "2"
+    ENABLE_HARDENED_RUNTIME: YES
+packages:
+  BoxSyncCore:
+    path: .
+targets:
+  BoxSync:
+    type: application
+    platform: macOS
+    sources: [Sources/BoxSyncApp]
+    dependencies:
+      - package: BoxSyncCore
+        product: BoxSyncCore
+      - target: BoxSyncFileProvider
+        embed: true
+    settings:
+      base:
+        PRODUCT_NAME: BoxSync
+        PRODUCT_BUNDLE_IDENTIFIER: de.martini-labs.BoxSync
+        INFOPLIST_FILE: Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/BoxSync.entitlements
+        SWIFT_VERSION: "6.0"
+  BoxSyncFileProvider:
+    type: app-extension
+    platform: macOS
+    sources: [Sources/BoxSyncFileProvider]
+    dependencies:
+      - package: BoxSyncCore
+        product: BoxSyncCore
+    settings:
+      base:
+        PRODUCT_NAME: BoxSyncFileProvider
+        PRODUCT_BUNDLE_IDENTIFIER: de.martini-labs.BoxSync.FileProvider
+        INFOPLIST_FILE: Resources/FileProvider-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/FileProvider.entitlements
+        # FileProvider's completion-handler API predates Sendable; Swift 5 mode keeps the glue readable.
+        SWIFT_VERSION: "5.0"

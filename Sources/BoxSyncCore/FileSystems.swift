@@ -32,18 +32,3 @@ extension RemoteFileSystem {
         }
     }
 }
-
-/// Local side (disk). Abstracted so the engine is testable without touching real folders.
-public protocol LocalFileSystem: Sendable {
-    /// `known` = last common local metadata; the hash is only recomputed when size/mtime differ from it.
-    func scan(root: URL, exclusions: [String], known: [RelativePath: FileMeta]) async throws -> Snapshot
-    func hash(_ path: RelativePath, root: URL) async throws -> String
-    func meta(_ path: RelativePath, root: URL, hash: String?) throws -> FileMeta?
-    /// Creates missing parent folders.
-    func move(_ from: RelativePath, to: RelativePath, root: URL) async throws
-    /// Moves into the local trash (`trashRoot` = already the dated folder) instead of deleting.
-    func trash(_ path: RelativePath, root: URL, trashRoot: URL) async throws
-    /// Moves a finished partial file to `path`; a file already there goes to the trash first.
-    func install(partial: URL, as path: RelativePath, root: URL, trashRoot: URL) async throws
-    func setModificationDate(_ path: RelativePath, root: URL, to date: Date) async throws
-}

@@ -4,17 +4,24 @@ import NIOCore
 
 private struct UncheckedFile: @unchecked Sendable { let file: SFTPFile }
 
-/// Citadel adapter. One connection per sync run (listDirectory leaks a directory handle per call,
-/// closing the session releases them). Credentials come in as parameters; Keychain is the app's job.
+/// Citadel adapter, one SSH connection. Credentials come in as parameters.
+/// Citadel's `listDirectory` never closes its directory handle, and the Box's sftp-server fails `opendir` with
+/// SSH_FX_FAILURE once its descriptors run out. Listings therefore run on their own SFTP channel that is replaced
+/// every `listsPerChannel` calls (closing a channel ends its server process and frees the handles). Listings are
+/// serialized so a replacement never closes a channel another listing still uses; file transfers run concurrently.
 public final class SFTPRemoteFileSystem: RemoteFileSystem, @unchecked Sendable {
     private let ssh: SSHClient
     private let sftp: SFTPClient
+    private let listLock = AsyncLock()
+    private var lister: SFTPClient?          // guarded by listLock
+    private var listedOnLister = 0           // guarded by listLock
+    static let listsPerChannel = 200
 
     /// Write/read window: 16 requests of one SFTP block each run concurrently; a batch finishes before the next starts.
     static let block = 32_000
     static let window = 16
-    /// Batch size, also the granularity of the resume offset (see `resumeOffset`).
-    public static let batchBytes = block * window
+    /// Bytes read from disk per upload batch.
+    static let batchBytes = block * window
 
     private init(ssh: SSHClient, sftp: SFTPClient) { self.ssh = ssh; self.sftp = sftp }
 
@@ -34,20 +41,19 @@ public final class SFTPRemoteFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
     }
 
+    /// False once the SSH connection or the main SFTP channel is gone; the session then reconnects.
+    public var isConnected: Bool { sftp.isActive }
+
     public func close() async {
+        await listLock.locked { try? await self.lister?.close() }
         try? await sftp.close()
         try? await ssh.close()
     }
 
-    /// Resume point for an interrupted upload: start of the batch that holds the last byte on the Box.
-    /// Writes inside a batch complete out of order, so only earlier batches are known complete.
-    public static func resumeOffset(remoteSize: UInt64) -> UInt64 {
-        remoteSize == 0 ? 0 : (remoteSize - 1) / UInt64(batchBytes) * UInt64(batchBytes)
-    }
-
     private func p(_ path: RelativePath) -> String { path.raw.isEmpty ? "." : path.raw }
 
-    private static func isNoSuchFile(_ error: Error) -> Bool {
+    public static func isNoSuchFile(_ error: Error) -> Bool {
+        if error is RemoteNotFound { return true }
         if let s = error as? SFTPMessage.Status { return s.errorCode == .noSuchFile }
         if case SFTPError.errorStatus(let s) = error { return s.errorCode == .noSuchFile }
         return false
@@ -62,8 +68,27 @@ public final class SFTPRemoteFileSystem: RemoteFileSystem, @unchecked Sendable {
     }
 
     public func list(_ dir: RelativePath) async throws -> [RelativePath: FileMeta] {
+        let listing: [SFTPMessage.Name] = try await listLock.locked {
+            do {
+                if self.lister?.isActive != true || self.listedOnLister >= Self.listsPerChannel {
+                    try? await self.lister?.close()
+                    self.lister = nil
+                    self.lister = try await self.ssh.openSFTP()
+                    self.listedOnLister = 0
+                }
+                self.listedOnLister += 1
+                return try await self.lister!.listDirectory(atPath: self.p(dir))
+            } catch where Self.isNoSuchFile(error) {
+                throw RemoteNotFound(path: dir.raw)
+            } catch {
+                // A failing listing channel is not reused: the next listing opens a fresh one.
+                try? await self.lister?.close()
+                self.lister = nil
+                throw RemoteListFailed(path: self.p(dir), detail: "\(error)")
+            }
+        }
         var out: [RelativePath: FileMeta] = [:]
-        for c in try await sftp.listDirectory(atPath: p(dir)).flatMap(\.components) where c.filename != "." && c.filename != ".." {
+        for c in listing.flatMap(\.components) where c.filename != "." && c.filename != ".." {
             // A Box name with "/" or NUL would escape its folder locally; abort the run (nothing is deleted on a partial listing).
             guard !c.filename.isEmpty, !c.filename.contains("/"), !c.filename.contains("\0") else { throw UnsafePath(path: dir.raw + "/" + c.filename) }
             let (m, regular) = Self.meta(c.attributes, longname: c.longname)
@@ -171,5 +196,53 @@ public final class SFTPRemoteFileSystem: RemoteFileSystem, @unchecked Sendable {
             throw error
         }
         try await file.file.close()
+    }
+}
+
+/// A Box name that would escape its folder locally ("/" or NUL inside a name).
+public struct UnsafePath: Error, LocalizedError, CustomStringConvertible, Equatable {
+    public let path: String
+    public var description: String { "Unsicherer Name auf der Box abgelehnt: \(path)" }
+    public var errorDescription: String? { description }
+}
+
+/// The path does not exist on the Box.
+public struct RemoteNotFound: Error, LocalizedError, CustomStringConvertible, Equatable {
+    public let path: String
+    public init(path: String) { self.path = path }
+    public var description: String { "Nicht mehr auf der Box: \(path)" }
+    public var errorDescription: String? { description }
+}
+
+/// A Box folder could not be listed; names the folder, the SFTP status alone says nothing.
+public struct RemoteListFailed: Error, LocalizedError, CustomStringConvertible, Equatable {
+    public let path: String
+    public let detail: String
+    public var description: String { "Box-Ordner nicht lesbar: \(path) (\(detail))" }
+    public var errorDescription: String? { description }
+}
+
+/// FIFO mutual exclusion across suspension points (an actor would interleave at every await).
+final class AsyncLock: @unchecked Sendable {
+    private let mutex = NSLock()
+    private var busy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func locked<T>(_ body: () async throws -> T) async rethrows -> T {
+        await acquire()
+        defer { release() }
+        return try await body()
+    }
+
+    private func acquire() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            mutex.lock()
+            if busy { waiters.append(c); mutex.unlock() } else { busy = true; mutex.unlock(); c.resume() }
+        }
+    }
+
+    private func release() {
+        mutex.lock()
+        if waiters.isEmpty { busy = false; mutex.unlock() } else { let next = waiters.removeFirst(); mutex.unlock(); next.resume() }
     }
 }

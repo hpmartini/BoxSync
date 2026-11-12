@@ -1,48 +1,56 @@
 # BoxSync Architektur
 
-Zwei-Wege-Sync lokaler Ordner <-> Hetzner Storage Box per SFTP (mehrere Ordner-Paare, je eine Engine) (Citadel 0.12.1, exakt gepinnt).
+Laufwerk für eine Hetzner Storage Box per SFTP als File-Provider-Erweiterung (Platzhalter, Laden beim Öffnen),
+Citadel 0.12.1 (exakt gepinnt).
 
-## Schichten
-- `BoxSyncApp` (SwiftUI-Menüleiste): nur Anzeige und Bedienung. Liest `SyncState` (ObservableObject), ruft `SyncEngine`. Keine Sync-Logik.
-- `BoxSyncCore` (Bibliothek, UI-frei):
-  - `SyncEngine`: Ablauf Scan -> Plan -> Ausführen -> Zustand schreiben. Schreibt `SyncStatus`.
-  - `SyncPlanner.plan(local:remote:base:)`: reine Funktion, kein I/O, ohne Netz testbar.
-  - `RemoteFileSystem` (Citadel-Adapter), `LocalFileSystem` (Platte + FSEvents), `StateStore` (JSON-Datei je Ordner-Paar): austauschbar, in Tests durch Fakes ersetzt.
-  - `Config`: Ordner, Host/Port/User, Ausschlüsse, Intervall, Papierkorb. Passwort nur im Schlüsselbund.
+## Teile
+- `BoxSync` (SwiftUI-Menüleiste, nicht sandboxed): Einstellungen, Passwort, Anmelden der File-Provider-Domain,
+  Verweis `config.localPath` -> Laufwerk, Timer für Aktualisierungen, Statusanzeige, `--check`. Kein Box-Zugriff
+  außer `--check`.
+- `BoxSyncFileProvider` (`NSFileProviderReplicatedExtension`, sandboxed): alle Box-Operationen.
+- `BoxSyncCore` (Swift-Paket, UI-frei, getestet mit `swift test`):
+  - `SFTPRemoteFileSystem` (Citadel-Adapter), `BoxSession` (eine geteilte Verbindung, Wiederaufbau, Backoff),
+    `BoxOperations` (Upload über Temp-Datei, Box-Papierkorb, Konfliktkopie-Namen).
+  - `ItemIndex` (SQLite in der App-Group): stabile Item-IDs <-> Box-Pfad (Eltern-ID + Name), Änderungslog.
+  - `Shared` (App-Group-UserDefaults: Einstellungen, Status; Darwin-Notification bei Statusänderung), `Keychain`
+    (Data-Protection-Keychain, Zugriffsgruppe `B6VK6QB456.de.martini-labs.BoxSync.shared`).
+- Gebaut mit Xcode aus `project.yml` (XcodeGen), automatische Signierung; das Profil erlaubt die Keychain-Gruppe.
 
-## Datenfluss
-1. Auslöser: FSEvents lokal, Timer für die Box (Standard 300 s), "Jetzt sync", Start.
-2. Scan: lokaler `Snapshot` und entfernter `Snapshot` (Listing liefert Größe + mtime). Hash nur bei Bedarf.
-3. `StateSnapshot` = letzter gemeinsamer Stand je Datei (Pfad, Hash/Größe/mtime lokal und entfernt).
-4. Planner vergleicht lokal/remote je gegen Basis -> `SyncPlan` (Liste von `SyncAction`).
-5. Engine führt aus (Upload, Download, Konfliktkopie, Papierkorb, Rename), danach `StateStore.upsert/remove` je Datei.
-6. Nach jedem Upload: Box-mtime per setstat auf lokale mtime setzen. mtime-Vergleich in ganzen Sekunden (SFTP v3).
-7. Abbruch: Teil-Datei wird mit Offset fortgesetzt (Upload: Remote-Größe, Download: lokale Teilgröße). Zustand erst nach vollständiger Übertragung.
+## Identität
+- Item-ID = UUID aus dem Index (Wurzel und Papierkorb: die System-IDs). IDs bleiben bei Umbenennen/Verschieben gleich;
+  Pfade werden aus Eltern-Kette und Namen gebildet.
+- Namen bleiben in Box-Schreibweise (NFC/NFD getrennt, Vergleich über UTF-8-Bytes). Listings sind Arrays, keine
+  Dictionaries mit String-Schlüsseln (die würden NFC und NFD zusammenlegen).
+- Kollidierende Namen (nur Groß-/Kleinschreibung oder Unicode-Form verschieden): eines wird gezeigt (das bekannte, sonst
+  das byteweise erste), das andere als Fehler gemeldet. Sonst würde macOS lokal umbenennen und das auf der Box nachziehen.
+- Nie gezeigt: `_trash`, `.ssh`, `_backup`, `.boxsync-partial` in der Wurzel; überall `.DS_Store`, `._*`,
+  `.boxsync-*.part`. Diese Namen werden auch nicht hochgeladen (`excludedFromSync`).
 
-## Namen und Pfade
-- Pfade relativ zum SFTP-Home, ohne führenden Slash (`_boxsync_test/x`).
-- `RelativePath` vergleicht und hasht über UTF-8-Bytes: NFC und NFD bleiben getrennte Dateien. `logical` (NFC) nur zum Zuordnen. Originalschreibweise geht an jeden SFTP-Aufruf.
+## Ablauf
+- Ordner öffnen: `FolderEnumerator` listet live, `ItemIndex.reconcile` gleicht ab (neu, geändert, weg) und protokolliert.
+  Der Ordner gilt danach als "gesehen".
+- Fremde Änderungen: App signalisiert alle `intervalSeconds` (und beim Aufwachen) den Working Set. Dessen
+  `enumerateChanges` listet alle gesehenen Ordner (Eltern zuerst, höchstens alle 20 s) und meldet die Einträge des
+  Änderungslogs seit dem Anker. Log hält 50 000 Einträge; älterer Anker -> `syncAnchorExpired` (System zählt neu auf).
+- Öffnen: `fetchContents` lädt in das Temp-Verzeichnis des Managers und prüft die Größe.
+- Anlegen: Ordner per `mkdir` (bestehender Box-Ordner wird übernommen); Datei per Upload. Name belegt -> Konfliktkopie
+  (bei `mayAlreadyExist` mit gleicher Größe und mtime: vorhandene Datei übernehmen).
+- Ändern: Umbenennen/Verschieben per `rename` (Ziel belegt -> `filenameCollision`). Inhalt: Box unverändert seit
+  letztem Stand -> alte Version in den Box-Papierkorb, neue an ihre Stelle. Box inzwischen geändert -> neuere Version
+  behält den Namen, die andere wird `Name (Konfliktkopie JJJJ-MM-TT HHMM).ext` daneben.
+- Papierkorb: Finder-Papierkorb = sofort `_trash/<Datum>/<Pfad>` auf der Box (Index merkt den Box-Pfad), Zurücklegen =
+  `rename` zurück. Papierkorb leeren oder Löschen außerhalb des Papierkorbs: Item bleibt in `_trash` auf der Box.
+  Löschen einer Datei, die sich auf der Box geändert hat -> `deletionRejected` (Änderung gewinnt).
+- Anderer Box-Zugang (Host, Port, Benutzer): Domain wird entfernt (lokale, nie hochgeladene Änderungen bewahrt macOS)
+  und neu angelegt, mit neuem Index.
 
-## Konfliktregeln
-- Beide Seiten seit Basis geändert (Hash/Größe weicht von Basis ab): die neuere mtime bleibt Original.
-- Die ältere Version wird `Name (Konfliktkopie JJJJ-MM-TT HHMM).ext` daneben gelegt, auf beiden Seiten, und in `SyncStatus.conflicts` gemeldet.
-- Gleicher Inhalt auf beiden Seiten: kein Konflikt, nur Basis nachziehen.
-- Änderung gegen Löschung: Änderung gewinnt, Datei wird neu übertragen.
-
-## Löschregel
-- Nie hartes Löschen. Löschung auf einer Seite -> Datei auf der anderen Seite in den Papierkorb.
-- Box: `<remoteRoot>/_trash/<Datum>/<Pfad>`. Lokal: `~/.Trash/BoxSync/<Datum>/<Pfad>`.
-- Rename nur lokal erkannt (gleicher SHA-256 wie die Basis): auf der Box verschieben statt neu hochladen. Neue Box-Datei mit gleicher Größe/mtime wie eine verschwundene gilt nicht als Rename (kein Inhaltsbeweis): Download plus Papierkorb.
-- Massenlösch-Sperre: mehr als 20 Papierkorb-Aktionen und mehr als die Hälfte aller Zustandsdatensätze: Papierkorb-Aktionen entfallen, Fehler sichtbar. Zustandsdatei je Paar (Ordner, Host, Port, Nutzer, Box-Wurzel): `state-<id>.json`.
-- Rename auf Zielpfad, der existiert: Ziel zuerst in den Papierkorb (SFTP v3 überschreibt nicht).
+## Verbindung
+- Eine SSH-Verbindung je Erweiterungsprozess; Dateiübertragungen parallel auf einem SFTP-Kanal.
+- Citadel `listDirectory` schließt Verzeichnis-Handles nicht -> Listings laufen seriell auf einem eigenen Kanal, der
+  alle 200 Listings ersetzt wird (sonst `SSH_FX_FAILURE` bei großen Boxen).
+- Die Box sperrt eine Adresse nach zu vielen Verbindungsversuchen. Nach fehlgeschlagenem Verbindungsaufbau wartet
+  `BoxSession` 30 s, verdoppelt bis 15 min; abgelehnte Anmeldung wird erst nach geänderten Zugangsdaten wiederholt.
 
 ## Fehler
-- Jeder Fehler landet sichtbar in `SyncStatus.errors` (Menüleiste, Benachrichtigung). Kein stilles Weitermachen.
-- Falsches Passwort: `allAuthenticationOptionsFailed` -> Phase `.error`.
-- Verbindungsabbruch: neu verbinden, Handles neu öffnen, per Offset fortsetzen.
-
-## Phase 2: File Provider
-- Erweiterung nutzt `RemoteFileSystem` und `StateStore` unverändert; Platzhalter sind ein weiterer Zustand je Datei (lokal "nur Metadaten").
-- Planner bleibt rein, bekommt nur neue `SyncAction`-Fälle (Materialisieren, Entladen).
-- Engine läuft als Dienst im Hauptprozess oder per XPC; die Oberfläche kennt nur `SyncEngine` und `SyncState`.
-- Bekannte Falle: `listDirectory` von Citadel schließt Handles nicht -> Listings selten oder Bibliothek patchen.
+- Jeder Fehler landet sichtbar im gemeinsamen Status (Menüleiste, Benachrichtigung) und als File-Provider-Fehler
+  (`notAuthenticated`, `serverUnreachable`, `cannotSynchronize`, `noSuchItem`). Kein stilles Weitermachen.

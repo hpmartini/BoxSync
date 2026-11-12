@@ -1,11 +1,12 @@
 # Obsidian vault on the iPhone via Remotely Save
 
-BoxSync keeps a Mac folder (for example an Obsidian vault) in sync with a Hetzner Storage Box over SFTP.
+BoxSync shows a Hetzner Storage Box as a drive on the Mac (SFTP). An Obsidian vault can live in a folder on that
+drive: open `MyVault` inside the BoxSync drive as a vault in Obsidian on the Mac.
 The iPhone cannot run BoxSync, so it reaches the same Box folder through the Obsidian plugin
 [Remotely Save](https://github.com/remotely-save/remotely-save), which speaks **WebDAV** (not SFTP).
 
 ```
-Mac folder  <-- BoxSync (SFTP) -->  Storage Box folder  <-- Remotely Save (WebDAV) -->  iPhone vault
+Mac vault on the BoxSync drive  <-- BoxSync (SFTP) -->  Storage Box folder  <-- Remotely Save (WebDAV) -->  iPhone vault
 ```
 
 Both tools must point at the **same Box folder**. This guide uses `MyVault` as the example folder name.
@@ -58,10 +59,10 @@ Replace it with the name of your vault folder.
 
 ## Check it on the Mac
 
-In the BoxSync menu choose *Alle nur prüfen* (check only). Notes written on the iPhone show up as pending
-downloads and arrive on the next sync. If a note changed on both sides, BoxSync keeps the newer one in place
-and stores the other as `Name (Konfliktkopie YYYY-MM-DD HHMM).md`. Remotely Save keeps the newer version
-by default.
+In the BoxSync menu choose *Jetzt aktualisieren*. Notes written on the iPhone appear in the vault folder
+(otherwise within the refresh interval, 5 minutes by default). If a note changed on both sides, BoxSync keeps the
+newer one in place and stores the other as `Name (Konfliktkopie YYYY-MM-DD HHMM).md`. Remotely Save keeps the newer
+version by default.
 
 ## Cleaning up
 

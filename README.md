@@ -1,126 +1,98 @@
 # BoxSync
 
-A native macOS menu bar app that keeps local folders in two-way sync with a
-[Hetzner Storage Box](https://www.hetzner.com/storage/storage-box/) over SFTP.
-No `rclone`, no mounts, no helper tools: one Swift app, one SFTP connection per run.
-
-<p align="center"><img src="docs/images/menu.png" alt="BoxSync menu with two folder pairs" width="640"></p>
+A native macOS drive for a [Hetzner Storage Box](https://www.hetzner.com/storage/storage-box/) over SFTP, built like
+iCloud Drive: Finder shows every file and folder of the Box as a placeholder, and a file is downloaded only when you
+open it. Changes go straight back to the Box. No `rclone`, no mounts: a menu bar app plus a File Provider extension.
 
 > The app's interface is in German for now. The code, comments and this README are in English.
 > BoxSync is an independent project and is not affiliated with Hetzner.
 
-## Why
-
-Mounting a Storage Box as a drive (WebDAV, SSHFS, `rclone mount`, GUI mount tools) can be fragile:
-writes may stall or get lost when the connection drops, and caches may go stale. BoxSync does it the boring way: it keeps a real local copy
-of each folder, compares it with the Box, and only moves what changed.
-
 ## Features
 
-- **Several folder pairs**, each with its own Box folder, exclusions and state. Example: `~/Documents` to the Box root
-  and `~/Notes` (an Obsidian vault) to `Notes/`.
-- **Two-way merge** with a stored base state per file: a change on one side is copied to the other,
-  a change on both sides keeps the newer file and stores the other as `Name (Konfliktkopie YYYY-MM-DD HHMM).ext`.
-- **Never deletes for good.** A deletion on one side moves the file to a trash on the other:
-  `_trash/<date>/` on the Box, `~/.Trash/BoxSync/<date>/` locally. Overwritten versions go there too.
-- **First sync needs your go.** The first run of a folder pair only shows the plan (uploads, downloads, conflicts).
-  Nothing moves until you press *Erstabgleich starten*.
-- **Check only.** *Nur prüfen* scans both sides and shows what a sync would do, without changing anything.
-- **Safe transfers:** atomic uploads through a temp file and rename, resume after an interruption,
-  SHA-256 verification, whole-second mtime comparison (SFTP v3), rename detection without re-upload.
-- **Mass-delete guard:** a run that would trash a large share of known files at once is stopped.
+- **Placeholders, download on open.** The drive appears in the Finder sidebar as *BoxSync*
+  (`~/Library/CloudStorage/BoxSync-BoxSync`), plus a link at a path of your choice (default `~/BoxSync`).
+  Finder's *Download Now* and *Remove Download* work as with iCloud Drive.
+- **Writes go to the Box at once,** through a temp file and a rename, so the Box never holds a half-written file.
+- **Never deletes for good.** Deleting (or emptying the Mac trash) leaves the item in `_trash/<date>/` on the Box.
+  A replaced version of a file goes there too.
+- **Conflicts:** a file changed on the Box and on the Mac at the same time keeps the newer version under its name;
+  the other one is stored next to it as `Name (Konfliktkopie YYYY-MM-DD HHMM).ext`. A file changed on the Box is not
+  deleted by a local delete.
+- **Changes from other devices** are picked up every 5 minutes (adjustable), on wake and with *Jetzt aktualisieren*.
+  Only folders you have opened are compared, so a large Box costs nothing until you browse it.
+- **Gentle with the Box:** one SSH connection; after a failed connect BoxSync waits (30 s up to 15 min) instead of
+  retrying, and a rejected login is not retried until the settings change. The Box blocks an address for a while
+  after too many attempts.
 - **Security:** the password lives in the Keychain only. The host key is pinned on first connect (trust on first use);
-  a changed key aborts the connection. Paths coming from the Box are validated so a hostile name cannot leave the sync folder.
-- **Unicode aware:** names are compared in NFC, so macOS (NFD) and Linux/iOS (NFC) spellings do not duplicate files.
-- Change detection through FSEvents plus a timer (default 5 minutes), launch at login, notifications for errors and conflicts.
-
-<p align="center"><img src="docs/images/settings.png" alt="BoxSync settings window" width="320"></p>
+  a changed key aborts the connection.
+- **Unicode and case:** NFC and NFD names stay distinct on the Box. Two names that only differ in letter case or
+  Unicode form cannot both exist on the Mac; the drive shows one and reports the other.
 
 ## Requirements
 
-- macOS 14 or newer, Xcode 16+ / Swift 6 toolchain
+- macOS 14 or newer, Xcode 16+ with an Apple ID signed in (Xcode > Settings > Accounts; a free Personal Team works)
+- `xcodegen` (`brew install xcodegen`)
 - A Hetzner Storage Box with SFTP (port 23) and password login
 
 ## Build and run
 
 ```sh
-scripts/build-app.sh          # builds build/BoxSync.app (signed, see "Limits" for the certificate)
-open build/BoxSync.app
+scripts/build-app.sh          # builds build/BoxSync.app, signed for the team in project.yml
+ditto build/BoxSync.app ~/Applications/BoxSync.app && open ~/Applications/BoxSync.app
 ```
 
-For development: `swift run BoxSyncApp` (no notifications outside an app bundle).
+To build for another team, change `DEVELOPMENT_TEAM`, the app group and the keychain group (`B6VK6QB456...`) in
+`project.yml`, `Resources/*.entitlements`, `Resources/FileProvider-Info.plist` and `Sources/BoxSyncCore/Shared.swift`.
 
-On first start open *Einstellungen…* and enter host (`uXXXXX.your-storagebox.de`), user, password,
-and add your folders. The Box folder field maps a local folder to a folder on the Box (empty = Box root).
-Exclusions are one pattern per line: `dir/**` (everything below `dir`), a bare name or glob (any path component),
-or a glob with `/` (whole relative path).
+First start:
 
-Never point two sync pairs at overlapping Box folders. If one pair maps the Box root, exclude the other pair's
-folder there (for example `Notes/**`).
+1. *Einstellungen…*: host (`uXXXXX.your-storagebox.de`), user (`uXXXXX`, not your e-mail address), password,
+   and the local folder for the link. Save.
+2. macOS asks once to allow the extension: System Settings > General > Login Items & Extensions > File Providers >
+   turn on *BoxSync*.
 
 ## Check from the command line
 
-`BoxSyncApp --check` scans every folder pair in check-only mode (nothing is changed on either side), prints a report
-and writes it to a file. No menu, no window, no clicks:
-
 ```sh
-~/Applications/BoxSync.app/Contents/MacOS/BoxSyncApp --check                 # report in ~/Library/Logs/BoxSync/check.txt
-~/Applications/BoxSync.app/Contents/MacOS/BoxSyncApp --check --out ~/check.txt
+~/Applications/BoxSync.app/Contents/MacOS/BoxSync --check                 # report in ~/Library/Logs/BoxSync/check.txt
+~/Applications/BoxSync.app/Contents/MacOS/BoxSync --check --out ~/check.txt
 ```
 
-Exit code: `0` everything in sync, `1` work pending or an error, `2` the report could not be written.
-The command runs inside the app binary so it uses the same Keychain approval as the menu bar app.
-It opens its own connection, so it can run while the app is running.
+Connects with the saved settings, lists the Box's main folder and prints the drive's last refresh, errors and conflict
+copies. Changes nothing. Exit code: `0` connection fine, `1` an error, `2` the report could not be written.
 
 ## Tests
 
 ```sh
-swift test                    # unit tests only, no network
-```
-
-The integration tests talk to a real Storage Box. They only create and remove folders under `_boxsync_test/`.
-Give them a Box of your own through the environment:
-
-```sh
+swift test                    # unit tests, no network
 BOXSYNC_TEST_HOST=uXXXXX.your-storagebox.de BOXSYNC_TEST_USER=uXXXXX BOXSYNC_TEST_PASSWORD=... swift test
 ```
 
+The integration tests only create and remove folders under `_boxsync_test/` (and their copies in `_trash/<date>/`).
 Without the three variables they are skipped.
 
 ## Screenshots with demo data
 
-`BOXSYNC_DEMO=1 build/BoxSync.app/Contents/MacOS/BoxSyncApp` starts the app with invented data that touches neither
-disk nor network. That is how the images in `docs/images` were made.
+`BOXSYNC_DEMO=1 ~/Applications/BoxSync.app/Contents/MacOS/BoxSync` starts the menu bar app with invented status,
+without touching the drive or the network.
 
 ## Using the same folder from an iPhone
 
-An Obsidian vault can be shared with the iPhone through the Remotely Save plugin (WebDAV).
+An Obsidian vault on the Box can be shared with the iPhone through the Remotely Save plugin (WebDAV).
 See [docs/obsidian-iphone.md](docs/obsidian-iphone.md).
 
 ## Limits
 
-- Password login only (no SSH keys yet). Symlinks and empty folders are not synced.
-- No on-demand download or automatic eviction: every folder is a full local copy.
-  A File Provider extension (placeholders) is the planned next step; the sync core is UI-free and sits behind the `SyncEngine` protocol.
-- Orphaned `.part` files from interrupted uploads are not cleaned up automatically.
-- Without a signing certificate, builds are signed ad hoc, so every rebuild is a new app identity for the Keychain.
-  macOS then asks for your login Keychain password ("BoxSync wants to use confidential information") after each rebuild.
-  Choose *Always Allow*. Until you answer, the app waits at start-up.
-  Run `scripts/make-signing-cert.sh` once: it creates a self-signed code-signing certificate "BoxSync Local Signing"
-  in your login keychain, and `scripts/build-app.sh` then signs every build with it. The identity stays the same,
-  so the prompt appears only once more after the switch (checked: a rebuild and reinstall afterwards raised no prompt).
-  Remove it with
-  `security delete-identity -c "BoxSync Local Signing"`.
-- Names that differ only in letter case (`Report.md` and `report.md`, also folders) cannot coexist on the default
-  case-insensitive macOS volume. BoxSync mirrors one spelling (the one you already have, else the byte-wise first),
-  reports the other as an error and never touches or trashes it. Rename it on the Box to bring it down.
-  A local case-only rename (`report.md` to `Report.md`) is treated as a new file and leaves the old name on the Box.
+- Password login only (no SSH keys yet). Symlinks on the Box are not shown.
+- With a free Personal Team, Xcode's provisioning profile is valid for 7 days. Rebuild and reinstall within that
+  time (`scripts/build-app.sh`), or the app and the extension stop starting.
+- Thumbnails are not provided by the extension; Finder shows icons for files that are not downloaded.
+- Orphaned `.boxsync-*.part` files from interrupted uploads are hidden but not removed from the Box.
 - The interface is German only.
 
 ## Design
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) (German) for layers, the planner and the state store.
-The sync logic is a pure function (`SyncPlanner.plan`) and is unit-tested without a network.
+See [ARCHITECTURE.md](ARCHITECTURE.md) (German).
 
 ## License
 
