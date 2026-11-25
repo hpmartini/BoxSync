@@ -222,6 +222,25 @@ public struct RemoteListFailed: Error, LocalizedError, CustomStringConvertible, 
     public var errorDescription: String? { description }
 }
 
+/// One `AsyncLock` per key, dropped when nobody holds or waits for it.
+public final class KeyedLock: @unchecked Sendable {
+    private let mutex = NSLock()
+    private var locks: [String: (lock: AsyncLock, users: Int)] = [:]
+    public init() {}
+
+    public func locked<T>(_ key: String, _ body: () async throws -> T) async rethrows -> T {
+        let l = mutex.withLock {
+            let l = locks[key]?.lock ?? AsyncLock()
+            locks[key] = (l, (locks[key]?.users ?? 0) + 1)
+            return l
+        }
+        defer {
+            mutex.withLock { if let e = locks[key] { locks[key] = e.users > 1 ? (e.lock, e.users - 1) : nil } }
+        }
+        return try await l.locked(body)
+    }
+}
+
 /// FIFO mutual exclusion across suspension points (an actor would interleave at every await).
 final class AsyncLock: @unchecked Sendable {
     private let mutex = NSLock()

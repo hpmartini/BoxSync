@@ -41,6 +41,42 @@ public enum BoxOperations {
         return m
     }
 
+    /// Downloads `path` into `dir` and returns the file with the metadata it matches. A cancelled attempt leaves its
+    /// bytes behind, and the next call for the same `key` and Box version continues from there: ForkLift and Finder
+    /// cancel and re-request an open after a few seconds, so restarting at 0 never finished large files.
+    /// Callers must not run two downloads of one `key` at once (they would share the partial file).
+    public static func download(_ r: RemoteFileSystem, _ path: RelativePath, key: String, into dir: URL,
+                                progress: @Sendable (UInt64, UInt64) -> Void = { _, _ in }) async throws -> (URL, FileMeta) {
+        guard let m = try await r.stat(path), !m.isDirectory else { throw RemoteNotFound(path: path.raw) }
+        let prefix = partialPrefix + String(key.map { $0.isLetter || $0.isNumber || $0 == "-" ? $0 : "_" }) + "-"
+        let dst = dir.appendingPathComponent("\(prefix)\(m.size)-\(m.mtimeSeconds)")
+        let fm = FileManager.default
+        for old in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where old.hasPrefix(prefix) && old != dst.lastPathComponent {
+            try? fm.removeItem(at: dir.appendingPathComponent(old))   // an older Box version of this file
+        }
+        let have = (try? fm.attributesOfItem(atPath: dst.path)[.size] as? NSNumber)?.uint64Value ?? 0
+        try await r.read(path, offset: have <= m.size ? have : 0, to: dst) { progress($0, m.size) }
+        let got = (try fm.attributesOfItem(atPath: dst.path)[.size] as? NSNumber)?.uint64Value ?? 0
+        guard got == m.size else {
+            try? fm.removeItem(at: dst)
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return (dst, m)
+    }
+
+    static let partialPrefix = "partial-"
+
+    /// Removes partial downloads nobody came back for (previews scrolled past).
+    public static func sweepPartials(in dir: URL, olderThan age: TimeInterval = 86_400, now: Date = Date()) {
+        let fm = FileManager.default
+        for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where name.hasPrefix(partialPrefix) {
+            let u = dir.appendingPathComponent(name)
+            if let d = try? fm.attributesOfItem(atPath: u.path)[.modificationDate] as? Date, now.timeIntervalSince(d) > age {
+                try? fm.removeItem(at: u)
+            }
+        }
+    }
+
     /// Moves a file or folder to `_trash/<day>/<path>`. Returns where it went.
     @discardableResult
     public static func trash(_ r: RemoteFileSystem, _ path: RelativePath, now: Date = Date()) async throws -> RelativePath {
