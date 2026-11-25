@@ -6,6 +6,8 @@ final class Drive {
     let domain: NSFileProviderDomain
     let index: ItemIndex
     let session: BoxSession
+    /// One download per item at a time (they share its partial file).
+    let downloads = KeyedLock()
     private let lock = NSLock()
     private var lastFullRefresh = Date.distantPast
     /// Writes through the extension in progress, and a counter bumped at the start and end of each. A listing is
@@ -18,6 +20,7 @@ final class Drive {
 
     init(domain: NSFileProviderDomain, index: ItemIndex, session: BoxSession) {
         self.domain = domain; self.index = index; self.session = session
+        if let tmp = try? manager?.temporaryDirectoryURL() { BoxOperations.sweepPartials(in: tmp) }
     }
 
     var manager: NSFileProviderManager? { NSFileProviderManager(for: domain) }

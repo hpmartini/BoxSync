@@ -98,14 +98,14 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         return perform(progress, path: { [weak self] in self?.drive?.index.path(of: id)?.raw }, { [domain] d in
             guard let row = d.index.item(id), !row.isDirectory, let path = d.index.path(of: id) else { throw NSFileProviderError(.noSuchItem) }
             guard let manager = NSFileProviderManager(for: domain) else { throw NSFileProviderError(.providerNotFound) }
-            let dst = try manager.temporaryDirectoryURL().appendingPathComponent(UUID().uuidString)
-            let meta = try await d.session.run(idempotent: true) { r -> FileMeta in
-                guard let m = try await r.stat(path), !m.isDirectory else { throw RemoteNotFound(path: path.raw) }
-                try await r.read(path, offset: 0, to: dst) { Self.ratio($0, m.size, into: progress) }
-                return m
+            let tmp = try manager.temporaryDirectoryURL()
+            // Resumes what a cancelled request for this item left. A cancelled request still running ends after its
+            // current block; the next one waits for it instead of writing the same partial file.
+            let (dst, meta) = try await d.downloads.locked(id) {
+                try await d.session.run(idempotent: true) { r in
+                    try await BoxOperations.download(r, path, key: id, into: tmp) { Self.ratio($0, $1, into: progress) }
+                }
             }
-            let got = (try FileManager.default.attributesOfItem(atPath: dst.path)[.size] as? NSNumber)?.uint64Value ?? 0
-            guard got == meta.size else { throw CocoaError(.fileReadCorruptFile) }
             if meta.size != row.size || meta.mtimeSeconds != row.mtime { d.index.update(id, meta: meta) }
             completionHandler(dst, d.item(id), nil)
         }, fail: { completionHandler(nil, nil, $0) })
